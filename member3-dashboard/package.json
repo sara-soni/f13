@@ -1,0 +1,21 @@
+{
+  "name": "leaveflow-workspace",
+  "version": "1.0.0",
+  "description": "LeaveFlow Enterprise Leave Management System - Full Stack Monorepo",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:backend": "npm run dev --prefix backend",
+    "build:frontend": "npm run build --prefix frontend",
+    "build:backend": "npm run build --prefix backend",
+    "build": "npm run build:backend && npm run build:frontend",
+    "test:backend": "npm test --prefix backend",
+    "lint:frontend": "npm run lint --prefix frontend",
+    "lint:backend": "npm run lint --prefix backend",
+    "lint": "npm run lint:backend && npm run lint:frontend"
+  }
+}

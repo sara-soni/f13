@@ -1,0 +1,406 @@
+openapi: 3.0.3
+info:
+  title: LeaveFlow Enterprise Leave Management API
+  version: 1.0.0
+  description: >
+    Production-ready REST API for the LeaveFlow Employee Leave Management Portal.
+    Backed by Amazon DynamoDB, Redis Cache, and AWS Cognito.
+servers:
+  - url: /api/v1
+    description: Current Environment API Server
+
+paths:
+  /health/live:
+    get:
+      summary: Liveness probe
+      description: Returns HTTP 200 if the process is alive.
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: live
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /health/ready:
+    get:
+      summary: Readiness probe
+      description: Checks connectivity to DynamoDB and Redis.
+      responses:
+        '200':
+          description: All dependencies are healthy
+        '503':
+          description: A required dependency is unavailable
+
+  /auth/login:
+    post:
+      summary: Server-managed sign in
+      description: Authenticates credentials, establishes Redis session, and sets secure HttpOnly cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+              properties:
+                username:
+                  type: string
+                  example: EMP001
+                password:
+                  type: string
+                  example: corporatePassword123
+      responses:
+        '200':
+          description: Session established
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: leaveflow_session=abc...; HttpOnly; SameSite=Lax; Path=/
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /auth/session:
+    get:
+      summary: Verify active session
+      description: Validates the HttpOnly session cookie and returns authenticated employee profile.
+      responses:
+        '200':
+          description: Valid active session
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      summary: Invalidate session
+      description: Destroys server-side session in Redis and clears session cookie.
+      responses:
+        '200':
+          description: Successfully logged out
+
+  /employee/me:
+    get:
+      summary: Get authenticated employee profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Authenticated employee profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeProfileResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /leave/config:
+    get:
+      summary: Get leave configuration and entitlement rules
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Active leave types and rules
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveConfigResponse'
+
+  /leave/balances:
+    get:
+      summary: Get employee leave balances for a year
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+            example: 2026
+      responses:
+        '200':
+          description: Leave balances list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveBalancesResponse'
+
+  /leave/requests:
+    get:
+      summary: List leave requests for the authenticated employee
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [PENDING, APPROVED, REJECTED, CANCELLED]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: List of leave requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaveRequestsResponse'
+    post:
+      summary: Submit a new leave request
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLeaveRequestInput'
+      responses:
+        '201':
+          description: Leave request successfully created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateLeaveRequestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /leave/requests/{requestId}:
+    get:
+      summary: Get leave request details
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request details
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /leave/requests/{requestId}/cancel:
+    post:
+      summary: Cancel a pending leave request
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request cancelled and balance restored
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    BadRequest:
+      description: Bad Request / Validation Failure
+    Unauthorized:
+      description: Missing or invalid authentication token
+    NotFound:
+      description: Requested resource was not found
+    UnprocessableEntity:
+      description: Business rule violation (insufficient balance, min notice failure)
+
+  schemas:
+    EmployeeProfileResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+              example: EMP001
+            name:
+              type: string
+              example: Sarah Jenkins
+            email:
+              type: string
+              example: sarah.jenkins@company.com
+            department:
+              type: string
+              example: Engineering
+            role:
+              type: string
+              example: Senior Frontend Engineer
+
+    LeaveConfigResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              leave_type:
+                type: string
+                example: ANNUAL
+              label:
+                type: string
+                example: Annual Leave
+              default_days_per_year:
+                type: number
+                example: 20
+              min_notice_days:
+                type: number
+                example: 2
+              max_consecutive_days:
+                type: number
+                example: 15
+              requires_attachment:
+                type: boolean
+                example: false
+              color:
+                type: string
+                example: "#2563eb"
+
+    LeaveBalancesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              employee_id:
+                type: string
+                example: EMP001
+              year_leave_type:
+                type: string
+                example: 2026#ANNUAL
+              leave_type:
+                type: string
+                example: ANNUAL
+              year:
+                type: integer
+                example: 2026
+              allocated:
+                type: number
+                example: 20
+              used:
+                type: number
+                example: 5
+              pending:
+                type: number
+                example: 2
+              available:
+                type: number
+                example: 13
+
+    CreateLeaveRequestInput:
+      type: object
+      required:
+        - leave_type
+        - start_date
+        - end_date
+        - reason
+      properties:
+        leave_type:
+          type: string
+          example: ANNUAL
+        start_date:
+          type: string
+          format: date
+          example: "2026-11-10"
+        end_date:
+          type: string
+          format: date
+          example: "2026-11-12"
+        reason:
+          type: string
+          example: Family event and annual vacation
+        attachment_url:
+          type: string
+          nullable: true
+
+    CreateLeaveRequestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          properties:
+            request_id:
+              type: string
+              example: "REQ-2026-A1B2C3"
+            status:
+              type: string
+              example: PENDING
+            days_count:
+              type: number
+              example: 3
+
+    LeaveRequestsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              request_id:
+                type: string
+              employee_id:
+                type: string
+              leave_type:
+                type: string
+              start_date:
+                type: string
+              end_date:
+                type: string
+              days_count:
+                type: number
+              reason:
+                type: string
+              status:
+                type: string
+              created_at:
+                type: string
